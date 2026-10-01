@@ -1,0 +1,829 @@
+// ============================================================
+// HMS Prisma Schema
+// Source of truth: docs/DATABASE.md, docs/SRS.md §7
+// Prisma 5 – Phase 0 initial migration
+// ============================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────────────────────
+// ENUMS
+// ─────────────────────────────────────────────────────────────
+
+enum ReservationStatus {
+  PENDING_PAYMENT
+  CONFIRMED
+  EXPIRED
+  CANCELLED
+  CHECKED_IN
+  CHECKED_OUT
+  NO_SHOW
+}
+
+enum ReservationSource {
+  ONLINE
+  WALK_IN
+  PHONE
+  STAFF
+}
+
+enum RoomStatus {
+  AVAILABLE
+  RESERVED
+  OCCUPIED
+  DIRTY
+  CLEANING
+  INSPECTION
+  MAINTENANCE
+  OUT_OF_SERVICE
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  FAILED
+  EXPIRED
+  CANCELLED
+  PARTIALLY_REFUNDED
+  REFUNDED
+}
+
+enum PaymentMethod {
+  CASH
+  BANK_TRANSFER
+  CREDIT_CARD
+  DEBIT_CARD
+  QRIS
+  VIRTUAL_ACCOUNT
+  OTHER
+}
+
+enum RefundStatus {
+  PENDING
+  PROCESSING
+  SUCCESS
+  FAILED
+}
+
+enum StayStatus {
+  ACTIVE
+  CHECKED_OUT
+}
+
+enum FolioStatus {
+  OPEN
+  CLOSED
+}
+
+enum FolioItemType {
+  ROOM_CHARGE
+  ADDITIONAL_CHARGE
+  DISCOUNT
+  TAX
+  SERVICE_CHARGE
+}
+
+// Note: AdditionalChargeCategory enum is kept separate from the lookup model
+// to avoid Prisma name collision.
+enum ChargeCategory {
+  BREAKFAST
+  EXTRA_BED
+  LAUNDRY
+  MINIBAR
+  RESTAURANT
+  SERVICE
+  LATE_CHECKOUT
+  EARLY_CHECKIN
+  OTHER
+}
+
+enum HousekeepingTaskStatus {
+  PENDING
+  IN_PROGRESS
+  DONE
+  FAILED_INSPECTION
+}
+
+enum MaintenancePriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum MaintenanceStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+enum InvoiceStatus {
+  ISSUED
+  VOID
+}
+
+enum DocumentType {
+  KTP
+  SIM
+  PASSPORT
+  OTHER
+}
+
+enum NotificationType {
+  BOOKING_CONFIRMATION
+  PAYMENT_RECEIVED
+  RESERVATION_MODIFIED
+  RESERVATION_CANCELLED
+  PRE_ARRIVAL
+  CHECKOUT_REMINDER
+  NO_SHOW_PROCESSED
+  INTERNAL
+}
+
+// ─────────────────────────────────────────────────────────────
+// IDENTITY – roles, permissions, users
+// ─────────────────────────────────────────────────────────────
+
+model Role {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  rolePermissions RolePermission[]
+  users           User[]
+
+  @@map("roles")
+}
+
+model Permission {
+  id          String   @id @default(cuid())
+  code        String   @unique // e.g. "reservations:create"
+  description String?
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  rolePermissions RolePermission[]
+
+  @@map("permissions")
+}
+
+model RolePermission {
+  roleId       String @map("role_id")
+  permissionId String @map("permission_id")
+
+  role       Role       @relation(fields: [roleId], references: [id])
+  permission Permission @relation(fields: [permissionId], references: [id])
+
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+model User {
+  id           String    @id @default(cuid())
+  name         String
+  email        String    @unique
+  passwordHash String    @map("password_hash")
+  roleId       String    @map("role_id")
+  isActive     Boolean   @default(true) @map("is_active")
+  lastLoginAt  DateTime? @map("last_login_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  role Role @relation(fields: [roleId], references: [id])
+
+  reservationsCreated       Reservation[]               @relation("CreatedBy")
+  reservationChangeLogs     ReservationChangeLog[]
+  checkIns                  Stay[]                      @relation("CheckedInBy")
+  roomAssignments           ReservationRoomAssignment[] @relation("AssignedBy")
+  housekeepingTasksAssigned HousekeepingTask[]          @relation("AssignedTo")
+  housekeepingTasksCreated  HousekeepingTask[]          @relation("CreatedBy")
+  maintenanceRequests       MaintenanceRequest[]
+  auditLogs                 AuditLog[]
+  paymentsProcessed         Payment[]                   @relation("ProcessedBy")
+
+  @@index([email])
+  @@map("users")
+}
+
+// ─────────────────────────────────────────────────────────────
+// HOTEL SETTINGS
+// ─────────────────────────────────────────────────────────────
+
+model HotelSetting {
+  id                        String   @id @default(cuid())
+  hotelName                 String   @map("hotel_name")
+  address                   String?
+  city                      String?
+  country                   String   @default("Indonesia")
+  phone                     String?
+  email                     String?
+  website                   String?
+  currency                  String   @default("IDR")
+  timezone                  String   @default("Asia/Jakarta")
+  checkInTime               String   @default("14:00") @map("check_in_time")
+  checkOutTime              String   @default("12:00") @map("check_out_time")
+  taxPercent                Decimal  @default(0) @map("tax_percent") @db.Decimal(5, 2)
+  serviceChargePercent      Decimal  @default(0) @map("service_charge_percent") @db.Decimal(5, 2)
+  allowOutstandingCheckout  Boolean  @default(false) @map("allow_outstanding_checkout")
+  generateInvoiceOnCheckout Boolean  @default(true) @map("generate_invoice_on_checkout")
+  logoUrl                   String?  @map("logo_url")
+  createdAt                 DateTime @default(now()) @map("created_at")
+  updatedAt                 DateTime @updatedAt @map("updated_at")
+
+  @@map("hotel_settings")
+}
+
+// ─────────────────────────────────────────────────────────────
+// GUESTS
+// ─────────────────────────────────────────────────────────────
+
+model Guest {
+  id          String   @id @default(cuid())
+  firstName   String   @map("first_name")
+  lastName    String?  @map("last_name")
+  email       String?
+  phone       String?
+  nationality String?
+  notes       String?
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  documents    GuestDocument[]
+  reservations Reservation[]
+  stays        Stay[]
+
+  @@index([email])
+  @@index([phone])
+  @@map("guests")
+}
+
+model GuestDocument {
+  id             String       @id @default(cuid())
+  guestId        String       @map("guest_id")
+  documentType   DocumentType @map("document_type")
+  documentNumber String       @map("document_number")
+  fileUrl        String?      @map("file_url")
+  verifiedAt     DateTime?    @map("verified_at")
+  createdAt      DateTime     @default(now()) @map("created_at")
+  updatedAt      DateTime     @updatedAt @map("updated_at")
+
+  guest Guest @relation(fields: [guestId], references: [id])
+
+  @@index([guestId])
+  @@map("guest_documents")
+}
+
+// ─────────────────────────────────────────────────────────────
+// ROOMS
+// ─────────────────────────────────────────────────────────────
+
+model RoomType {
+  id           String   @id @default(cuid())
+  code         String   @unique
+  name         String
+  description  String?
+  maxOccupancy Int      @map("max_occupancy")
+  basePrice    Decimal  @map("base_price") @db.Decimal(15, 2)
+  amenities    String[]
+  imageUrls    String[] @map("image_urls")
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  rooms            Room[]
+  reservationItems ReservationItem[]
+  roomRates        RoomRate[]
+
+  @@map("room_types")
+}
+
+model Room {
+  id          String     @id @default(cuid())
+  roomTypeId  String     @map("room_type_id")
+  roomNumber  String     @unique @map("room_number")
+  floor       Int?
+  description String?
+  status      RoomStatus @default(AVAILABLE)
+  isActive    Boolean    @default(true) @map("is_active")
+  createdAt   DateTime   @default(now()) @map("created_at")
+  updatedAt   DateTime   @updatedAt @map("updated_at")
+
+  roomType            RoomType                    @relation(fields: [roomTypeId], references: [id])
+  assignmentHistory   RoomAssignmentHistory[]
+  roomAssignments     ReservationRoomAssignment[]
+  stays               Stay[]
+  housekeepingTasks   HousekeepingTask[]
+  maintenanceRequests MaintenanceRequest[]
+
+  @@index([status])
+  @@index([roomTypeId])
+  @@map("rooms")
+}
+
+model RoomAssignmentHistory {
+  id            String    @id @default(cuid())
+  roomId        String    @map("room_id")
+  reservationId String?   @map("reservation_id")
+  guestId       String?   @map("guest_id")
+  assignedAt    DateTime  @map("assigned_at")
+  releasedAt    DateTime? @map("released_at")
+  notes         String?
+  createdAt     DateTime  @default(now()) @map("created_at")
+
+  room Room @relation(fields: [roomId], references: [id])
+
+  @@index([roomId])
+  @@map("room_assignment_history")
+}
+
+// ─────────────────────────────────────────────────────────────
+// PRICING
+// ─────────────────────────────────────────────────────────────
+
+model RatePlan {
+  id                   String   @id @default(cuid())
+  code                 String   @unique
+  name                 String
+  description          String?
+  isRefundable         Boolean  @default(true) @map("is_refundable")
+  includesBreakfast    Boolean  @default(false) @map("includes_breakfast")
+  cancellationPolicyId String?  @map("cancellation_policy_id")
+  modificationPolicyId String?  @map("modification_policy_id")
+  noShowPolicyId       String?  @map("no_show_policy_id")
+  isActive             Boolean  @default(true) @map("is_active")
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+
+  cancellationPolicy CancellationPolicy? @relation(fields: [cancellationPolicyId], references: [id])
+  modificationPolicy ModificationPolicy? @relation(fields: [modificationPolicyId], references: [id])
+  noShowPolicy       NoShowPolicy?       @relation(fields: [noShowPolicyId], references: [id])
+  roomRates          RoomRate[]
+  reservationItems   ReservationItem[]
+
+  @@map("rate_plans")
+}
+
+model RoomRate {
+  id         String   @id @default(cuid())
+  roomTypeId String   @map("room_type_id")
+  ratePlanId String   @map("rate_plan_id")
+  stayDate   DateTime @map("stay_date") @db.Date
+  price      Decimal  @db.Decimal(15, 2)
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  roomType RoomType @relation(fields: [roomTypeId], references: [id])
+  ratePlan RatePlan @relation(fields: [ratePlanId], references: [id])
+
+  @@unique([roomTypeId, ratePlanId, stayDate])
+  @@index([roomTypeId, ratePlanId])
+  @@map("room_rates")
+}
+
+model CancellationPolicy {
+  id                String   @id @default(cuid())
+  name              String
+  description       String?
+  freeDeadlineHours Int?     @map("free_deadline_hours")
+  penaltyPercent    Decimal? @map("penalty_percent") @db.Decimal(5, 2)
+  penaltyNights     Int?     @map("penalty_nights")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  ratePlans RatePlan[]
+
+  @@map("cancellation_policies")
+}
+
+model ModificationPolicy {
+  id                String   @id @default(cuid())
+  name              String
+  description       String?
+  allowModification Boolean  @default(true) @map("allow_modification")
+  freeDeadlineHours Int?     @map("free_deadline_hours")
+  penaltyPercent    Decimal? @map("penalty_percent") @db.Decimal(5, 2)
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  ratePlans RatePlan[]
+
+  @@map("modification_policies")
+}
+
+model NoShowPolicy {
+  id             String   @id @default(cuid())
+  name           String
+  description    String?
+  penaltyPercent Decimal? @map("penalty_percent") @db.Decimal(5, 2)
+  penaltyNights  Int?     @map("penalty_nights")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  ratePlans RatePlan[]
+
+  @@map("no_show_policies")
+}
+
+// ─────────────────────────────────────────────────────────────
+// RESERVATIONS
+// ─────────────────────────────────────────────────────────────
+
+model Reservation {
+  id               String            @id @default(cuid())
+  bookingReference String            @unique @map("booking_reference")
+  guestId          String            @map("guest_id")
+  source           ReservationSource
+  status           ReservationStatus @default(PENDING_PAYMENT)
+  checkIn          DateTime          @map("check_in") @db.Date
+  checkOut         DateTime          @map("check_out") @db.Date // exclusive (BR-RES-002)
+  adults           Int               @default(1)
+  children         Int               @default(0)
+
+  // Guest snapshot – immutable after creation
+  guestFirstName String  @map("guest_first_name")
+  guestLastName  String? @map("guest_last_name")
+  guestEmail     String? @map("guest_email")
+  guestPhone     String? @map("guest_phone")
+
+  specialRequest String? @map("special_request") // guest-visible
+  internalNote   String? @map("internal_note") // staff-only
+
+  // Financials – server-calculated at booking time (BR-RES-005)
+  subtotal       Decimal @default(0) @db.Decimal(15, 2)
+  taxAmount      Decimal @default(0) @map("tax_amount") @db.Decimal(15, 2)
+  serviceCharge  Decimal @default(0) @map("service_charge") @db.Decimal(15, 2)
+  discountAmount Decimal @default(0) @map("discount_amount") @db.Decimal(15, 2)
+  totalAmount    Decimal @default(0) @map("total_amount") @db.Decimal(15, 2)
+
+  createdById String?  @map("created_by")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  guest     Guest @relation(fields: [guestId], references: [id])
+  createdBy User? @relation("CreatedBy", fields: [createdById], references: [id])
+
+  items           ReservationItem[]
+  roomAssignments ReservationRoomAssignment[]
+  changeLogs      ReservationChangeLog[]
+  cancellation    ReservationCancellation?
+  stays           Stay[]
+  folio           Folio?
+  payments        Payment[]
+
+  @@index([checkIn, checkOut])
+  @@index([status])
+  @@index([guestId])
+  @@map("reservations")
+}
+
+model ReservationItem {
+  id            String   @id @default(cuid())
+  reservationId String   @map("reservation_id")
+  roomTypeId    String   @map("room_type_id")
+  ratePlanId    String   @map("rate_plan_id")
+  quantity      Int      @default(1)
+  pricePerNight Decimal  @map("price_per_night") @db.Decimal(15, 2)
+  nights        Int
+  subtotal      Decimal  @db.Decimal(15, 2)
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  reservation Reservation @relation(fields: [reservationId], references: [id])
+  roomType    RoomType    @relation(fields: [roomTypeId], references: [id])
+  ratePlan    RatePlan    @relation(fields: [ratePlanId], references: [id])
+
+  nightsDetail    ReservationItemNight[]
+  roomAssignments ReservationRoomAssignment[]
+  stays           Stay[]
+
+  @@index([reservationId])
+  @@map("reservation_items")
+}
+
+model ReservationItemNight {
+  id                String   @id @default(cuid())
+  reservationItemId String   @map("reservation_item_id")
+  stayDate          DateTime @map("stay_date") @db.Date
+  roomRate          Decimal  @map("room_rate") @db.Decimal(15, 2)
+  taxAmount         Decimal  @default(0) @map("tax_amount") @db.Decimal(15, 2)
+  subtotal          Decimal  @db.Decimal(15, 2)
+
+  reservationItem ReservationItem @relation(fields: [reservationItemId], references: [id])
+
+  @@unique([reservationItemId, stayDate])
+  @@map("reservation_item_nights")
+}
+
+model ReservationRoomAssignment {
+  id                String    @id @default(cuid())
+  reservationId     String    @map("reservation_id")
+  reservationItemId String    @map("reservation_item_id")
+  roomId            String    @map("room_id")
+  assignedAt        DateTime  @default(now()) @map("assigned_at")
+  assignedById      String?   @map("assigned_by")
+  releasedAt        DateTime? @map("released_at")
+
+  reservation     Reservation     @relation(fields: [reservationId], references: [id])
+  reservationItem ReservationItem @relation(fields: [reservationItemId], references: [id])
+  room            Room            @relation(fields: [roomId], references: [id])
+  assignedBy      User?           @relation("AssignedBy", fields: [assignedById], references: [id])
+
+  @@index([reservationId])
+  @@map("reservation_room_assignments")
+}
+
+model ReservationChangeLog {
+  id            String   @id @default(cuid())
+  reservationId String   @map("reservation_id")
+  changedById   String?  @map("changed_by")
+  changeType    String   @map("change_type")
+  previousData  Json?    @map("previous_data")
+  newData       Json?    @map("new_data")
+  notes         String?
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  reservation Reservation @relation(fields: [reservationId], references: [id])
+  changedBy   User?       @relation(fields: [changedById], references: [id])
+
+  @@index([reservationId])
+  @@map("reservation_change_logs")
+}
+
+model ReservationCancellation {
+  id               String   @id @default(cuid())
+  reservationId    String   @unique @map("reservation_id")
+  cancelledAt      DateTime @default(now()) @map("cancelled_at")
+  reason           String?
+  cancellationFee  Decimal  @default(0) @map("cancellation_fee") @db.Decimal(15, 2)
+  refundableAmount Decimal  @default(0) @map("refundable_amount") @db.Decimal(15, 2)
+
+  reservation Reservation @relation(fields: [reservationId], references: [id])
+
+  @@map("reservation_cancellations")
+}
+
+// ─────────────────────────────────────────────────────────────
+// STAYS
+// ─────────────────────────────────────────────────────────────
+
+model Stay {
+  id                String     @id @default(cuid())
+  reservationId     String     @map("reservation_id")
+  reservationItemId String     @map("reservation_item_id")
+  guestId           String     @map("guest_id")
+  roomId            String     @map("room_id")
+  checkedInAt       DateTime   @default(now()) @map("checked_in_at")
+  checkedInById     String?    @map("checked_in_by")
+  expectedCheckOut  DateTime   @map("expected_check_out")
+  actualCheckOut    DateTime?  @map("actual_check_out")
+  status            StayStatus @default(ACTIVE)
+  createdAt         DateTime   @default(now()) @map("created_at")
+  updatedAt         DateTime   @updatedAt @map("updated_at")
+
+  reservation     Reservation     @relation(fields: [reservationId], references: [id])
+  reservationItem ReservationItem @relation(fields: [reservationItemId], references: [id])
+  guest           Guest           @relation(fields: [guestId], references: [id])
+  room            Room            @relation(fields: [roomId], references: [id])
+  checkedInBy     User?           @relation("CheckedInBy", fields: [checkedInById], references: [id])
+
+  @@index([reservationId])
+  @@index([status])
+  @@map("stays")
+}
+
+// ─────────────────────────────────────────────────────────────
+// BILLING
+// ─────────────────────────────────────────────────────────────
+
+/// Lookup table for custom additional charge labels.
+/// The ChargeCategory enum covers standard categories;
+/// this table allows extending with hotel-specific categories.
+model ChargeCategoryLookup {
+  id          String  @id @default(cuid())
+  code        String  @unique
+  label       String
+  description String?
+  isActive    Boolean @default(true) @map("is_active")
+
+  @@map("charge_category_lookups")
+}
+
+model Folio {
+  id             String      @id @default(cuid())
+  reservationId  String      @unique @map("reservation_id")
+  status         FolioStatus @default(OPEN)
+  currency       String      @default("IDR")
+  subtotal       Decimal     @default(0) @db.Decimal(15, 2)
+  taxAmount      Decimal     @default(0) @map("tax_amount") @db.Decimal(15, 2)
+  serviceCharge  Decimal     @default(0) @map("service_charge") @db.Decimal(15, 2)
+  discountAmount Decimal     @default(0) @map("discount_amount") @db.Decimal(15, 2)
+  totalAmount    Decimal     @default(0) @map("total_amount") @db.Decimal(15, 2)
+  balanceAmount  Decimal     @default(0) @map("balance_amount") @db.Decimal(15, 2)
+  createdAt      DateTime    @default(now()) @map("created_at")
+  closedAt       DateTime?   @map("closed_at")
+
+  reservation Reservation @relation(fields: [reservationId], references: [id])
+
+  items    FolioItem[]
+  payments Payment[]
+  invoice  Invoice?
+
+  @@map("folios")
+}
+
+model FolioItem {
+  id          String        @id @default(cuid())
+  folioId     String        @map("folio_id")
+  type        FolioItemType
+  category    String? // ChargeCategory code or custom label
+  description String
+  quantity    Decimal       @default(1) @db.Decimal(10, 3)
+  unitPrice   Decimal       @map("unit_price") @db.Decimal(15, 2)
+  subtotal    Decimal       @db.Decimal(15, 2)
+  stayDate    DateTime?     @map("stay_date") @db.Date // for room charges
+  createdAt   DateTime      @default(now()) @map("created_at")
+
+  folio Folio @relation(fields: [folioId], references: [id])
+
+  @@index([folioId])
+  @@map("folio_items")
+}
+
+// ─────────────────────────────────────────────────────────────
+// PAYMENTS & REFUNDS
+// ─────────────────────────────────────────────────────────────
+
+model Payment {
+  id                    String        @id @default(cuid())
+  reservationId         String        @map("reservation_id")
+  folioId               String?       @map("folio_id")
+  amount                Decimal       @db.Decimal(15, 2)
+  method                PaymentMethod
+  provider              String? // midtrans | xendit | stripe | manual
+  providerTransactionId String?       @unique @map("provider_transaction_id")
+  idempotencyKey        String?       @unique @map("idempotency_key")
+  status                PaymentStatus @default(PENDING)
+  paidAt                DateTime?     @map("paid_at")
+  expiresAt             DateTime?     @map("expires_at")
+  processedById         String?       @map("processed_by")
+  createdAt             DateTime      @default(now()) @map("created_at")
+  updatedAt             DateTime      @updatedAt @map("updated_at")
+
+  reservation Reservation @relation(fields: [reservationId], references: [id])
+  folio       Folio?      @relation(fields: [folioId], references: [id])
+  processedBy User?       @relation("ProcessedBy", fields: [processedById], references: [id])
+
+  refunds Refund[]
+
+  @@index([reservationId])
+  @@index([providerTransactionId])
+  @@map("payments")
+}
+
+model Refund {
+  id               String       @id @default(cuid())
+  paymentId        String       @map("payment_id")
+  reservationId    String       @map("reservation_id")
+  folioId          String?      @map("folio_id")
+  amount           Decimal      @db.Decimal(15, 2)
+  reason           String?
+  status           RefundStatus @default(PENDING)
+  providerRefundId String?      @unique @map("provider_refund_id")
+  refundedAt       DateTime?    @map("refunded_at")
+  createdAt        DateTime     @default(now()) @map("created_at")
+  updatedAt        DateTime     @updatedAt @map("updated_at")
+
+  payment Payment @relation(fields: [paymentId], references: [id])
+
+  @@index([paymentId])
+  @@map("refunds")
+}
+
+// ─────────────────────────────────────────────────────────────
+// INVOICES
+// ─────────────────────────────────────────────────────────────
+
+model Invoice {
+  id            String        @id @default(cuid())
+  folioId       String        @unique @map("folio_id")
+  invoiceNumber String        @unique @map("invoice_number")
+  status        InvoiceStatus @default(ISSUED)
+  issuedAt      DateTime      @default(now()) @map("issued_at")
+
+  // Guest snapshot at invoice time (BR-OUT-009)
+  guestFirstName String  @map("guest_first_name")
+  guestLastName  String? @map("guest_last_name")
+  guestEmail     String? @map("guest_email")
+  guestPhone     String? @map("guest_phone")
+  guestAddress   String? @map("guest_address")
+
+  // Financial snapshot
+  subtotal       Decimal @db.Decimal(15, 2)
+  taxAmount      Decimal @map("tax_amount") @db.Decimal(15, 2)
+  serviceCharge  Decimal @map("service_charge") @db.Decimal(15, 2)
+  discountAmount Decimal @map("discount_amount") @db.Decimal(15, 2)
+  totalAmount    Decimal @map("total_amount") @db.Decimal(15, 2)
+
+  folio Folio @relation(fields: [folioId], references: [id])
+
+  @@map("invoices")
+}
+
+// ─────────────────────────────────────────────────────────────
+// HOUSEKEEPING
+// ─────────────────────────────────────────────────────────────
+
+model HousekeepingTask {
+  id           String                 @id @default(cuid())
+  roomId       String                 @map("room_id")
+  status       HousekeepingTaskStatus @default(PENDING)
+  assignedToId String?                @map("assigned_to")
+  createdById  String?                @map("created_by")
+  notes        String?
+  startedAt    DateTime?              @map("started_at")
+  completedAt  DateTime?              @map("completed_at")
+  inspectedAt  DateTime?              @map("inspected_at")
+  createdAt    DateTime               @default(now()) @map("created_at")
+  updatedAt    DateTime               @updatedAt @map("updated_at")
+
+  room       Room  @relation(fields: [roomId], references: [id])
+  assignedTo User? @relation("AssignedTo", fields: [assignedToId], references: [id])
+  createdBy  User? @relation("CreatedBy", fields: [createdById], references: [id])
+
+  @@index([roomId])
+  @@index([status])
+  @@map("housekeeping_tasks")
+}
+
+// ─────────────────────────────────────────────────────────────
+// MAINTENANCE
+// ─────────────────────────────────────────────────────────────
+
+model MaintenanceRequest {
+  id           String              @id @default(cuid())
+  roomId       String              @map("room_id")
+  reportedById String?             @map("reported_by")
+  category     String?
+  description  String
+  priority     MaintenancePriority @default(MEDIUM)
+  status       MaintenanceStatus   @default(OPEN)
+  photoUrls    String[]            @map("photo_urls")
+  resolvedAt   DateTime?           @map("resolved_at")
+  createdAt    DateTime            @default(now()) @map("created_at")
+  updatedAt    DateTime            @updatedAt @map("updated_at")
+
+  room       Room  @relation(fields: [roomId], references: [id])
+  reportedBy User? @relation(fields: [reportedById], references: [id])
+
+  @@index([roomId])
+  @@index([status])
+  @@map("maintenance_requests")
+}
+
+// ─────────────────────────────────────────────────────────────
+// SYSTEM – audit_logs, notifications
+// ─────────────────────────────────────────────────────────────
+
+model AuditLog {
+  id           String   @id @default(cuid())
+  userId       String?  @map("user_id")
+  action       String // e.g. "reservation.cancel"
+  resourceType String   @map("resource_type")
+  resourceId   String   @map("resource_id")
+  previousData Json?    @map("previous_data")
+  newData      Json?    @map("new_data")
+  ipAddress    String?  @map("ip_address")
+  userAgent    String?  @map("user_agent")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  user User? @relation(fields: [userId], references: [id])
+
+  @@index([resourceType, resourceId])
+  @@index([userId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+model Notification {
+  id        String           @id @default(cuid())
+  type      NotificationType
+  recipient String // email or userId
+  subject   String?
+  body      String?
+  metadata  Json?
+  sentAt    DateTime?        @map("sent_at")
+  failedAt  DateTime?        @map("failed_at")
+  error     String?
+  createdAt DateTime         @default(now()) @map("created_at")
+
+  @@index([recipient])
+  @@map("notifications")
+}
