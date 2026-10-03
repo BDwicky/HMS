@@ -18,12 +18,15 @@ import { NextResponse } from "next/server";
 
 const PUBLIC_PATHS = [
   "/",
+  "/booking",
   "/login",
   "/api/auth",
   "/api/availability",
   "/api/reservations/lookup",
   "/api/payments/webhook",
   "/api/cron",
+  "/videos",
+  "/images",
 ];
 
 export default auth((req) => {
@@ -59,8 +62,8 @@ export const config = {
      * - _next/static (static files)
      * - _next/image (image optimization)
      * - favicon.ico
-     * - public files (png, svg, etc.)
+     * - public files (png, svg, webm, mp4, etc.)
      */
-    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+    "/((?!_next/static|_next/image|favicon.ico|videos/|images/|.*\\.(?:svg|png|jpg|jpeg|gif|webp|webm|mp4|mov)$).*)",
   ],
 };

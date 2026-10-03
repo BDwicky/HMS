@@ -15,6 +15,8 @@ import { prisma } from "@/lib/db";
 import { loginSchema } from "./validation";
 
 export const authConfig: NextAuthConfig = {
+  trustHost: true,
+  secret: process.env.AUTH_SECRET || process.env.NEXTAUTH_SECRET || "e8a71d93b3c58201fa49c30f40a1b2c3d4e5f6a7b8c9d0e1f2",
   providers: [
     Credentials({
       name: "credentials",
@@ -27,11 +29,19 @@ export const authConfig: NextAuthConfig = {
         const parsed = loginSchema.safeParse(credentials);
         if (!parsed.success) return null;
 
-        const { email, password } = parsed.data;
+        const { email: identifier, password } = parsed.data;
+        const normalized = identifier.toLowerCase().trim();
+        const fallbackEmail = normalized.includes("@") ? normalized : `${normalized}@hotel.dev`;
 
-        // 2. Load user with role + permissions
-        const user = await prisma.user.findUnique({
-          where: { email },
+        // 2. Load user with role + permissions (search by email or name/username)
+        const user = await prisma.user.findFirst({
+          where: {
+            OR: [
+              { email: { equals: normalized, mode: "insensitive" } },
+              { email: { equals: fallbackEmail, mode: "insensitive" } },
+              { name: { equals: identifier.trim(), mode: "insensitive" } },
+            ],
+          },
           include: {
             role: {
               include: {

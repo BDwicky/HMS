@@ -3,11 +3,11 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: {
-    default: "Hotel Management System",
-    template: "%s | Hotel Management System",
+    default: "MARINA BAY SANDS | Luxury Hotel & Integrated Resort",
+    template: "%s | MARINA BAY SANDS",
   },
   description:
-    "Single-property hotel management system for internal operations and guest booking.",
+    "Nikmati kemewahan legendaris di Marina Bay Sands: Infinity pool rooftop tertinggi di dunia, kamar & suite mewah, serta kuliner kelas dunia.",
 };
 
 export default function RootLayout({

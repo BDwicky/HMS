@@ -144,7 +144,7 @@ async function main() {
   const passwordHash = await bcrypt.hash("admin123!", 12);
   await prisma.user.upsert({
     where: { email: "admin@hotel.dev" },
-    update: {},
+    update: { passwordHash, isActive: true },
     create: {
       name: "System Admin",
       email: "admin@hotel.dev",
@@ -154,6 +154,26 @@ async function main() {
     },
   });
   console.log("  ✓ Admin user upserted (admin@hotel.dev / admin123!)");
+
+  // Staff testing account: "Testing" / "123123"
+  const testingPasswordHash = await bcrypt.hash("123123", 12);
+  await prisma.user.upsert({
+    where: { email: "testing@hotel.dev" },
+    update: {
+      name: "Testing",
+      passwordHash: testingPasswordHash,
+      roleId: adminRole.id,
+      isActive: true,
+    },
+    create: {
+      name: "Testing",
+      email: "testing@hotel.dev",
+      passwordHash: testingPasswordHash,
+      roleId: adminRole.id,
+      isActive: true,
+    },
+  });
+  console.log("  ✓ Testing staff user upserted (Testing / 123123)");
 
   // ── 4. Default hotel settings ────────────────────────────────────────────
   const existing = await prisma.hotelSetting.count();
